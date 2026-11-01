@@ -6,7 +6,7 @@
   高德/腾讯 GCJ-02 -> 迭代逆解 -> WGS84
   百度  BD-09 -> GCJ-02 -> 迭代逆解 -> WGS84
 
-重要：坐标转换算法迁移自广西行政区划项目已验证版本（黄金向量校验误差 <1m），
+重要：坐标转换算法基于公开的 GCJ-02 / BD-09 转换公式实现（黄金向量往返校验误差 <1m），
       请勿改写公式，尤其是 gcj02_to_wgs84 的 6 次迭代逆解。
 """
 import json
@@ -16,6 +16,7 @@ import random
 import re
 import ssl
 import time
+import warnings
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -36,6 +37,11 @@ try:
         """天地图 CGCS2000 -> WGS84（严格转换）"""
         return _T4490_4326.transform(lon, lat)
 except ImportError:  # 无 pyproj 时降级为恒等（CGCS2000 与 WGS84 差异 <1m）
+    warnings.warn(
+        "未安装 pyproj：天地图 CGCS2000 坐标将按恒等处理（与 WGS84 差异 <1m）。"
+        "需要严格转换请执行 pip install pyproj",
+        RuntimeWarning, stacklevel=2)
+
     def cgcs2000_to_wgs84(lon, lat):
         return lon, lat
 
@@ -195,12 +201,13 @@ class PermissionError_(Exception):
     """权限/Key 类型错误，应终止并提示用户"""
 
 
+#: 证书校验保持默认开启（Key 与用户地址都在 URL/正文里，不做明文降级）。
+#: 实际请求由 config.http_opener() 统一出网（含失效代理自动跳过），
+#: 这里的 _CTX 仅保留给第三方库/特殊场景手工调用。
 _CTX = ssl.create_default_context()
-_CTX.check_hostname = False
-_CTX.verify_mode = ssl.CERT_NONE
 
-# 注：实际请求由 config.http_opener() 统一出网（含失效代理自动跳过），
-#     这里的 _CTX 仅保留给第三方库/特殊场景手工调用。
+#: 最近一次网络失败原因（诊断用；调用方可通过它区分「查无结果」与「没查成」）
+_LAST_NET_ERROR = ""
 
 
 def _get(url, timeout=None, no_ua=True):
@@ -250,6 +257,11 @@ def _get_retry(url, retries=None, **kw):
             if i == retries - 1:
                 break
             time.sleep(base * (i + 1) + random.random())
+    # 不再静默：网络层失败必须冒泡到 stderr，避免把「没查成」写成「未命中」。
+    global _LAST_NET_ERROR
+    _LAST_NET_ERROR = last_err or "unknown"
+    warnings.warn(f"网络请求失败（已重试 {retries} 次）：{last_err}",
+                  RuntimeWarning, stacklevel=2)
     return json.dumps({"net_error": last_err})
 
 

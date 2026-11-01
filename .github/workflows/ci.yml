@@ -28,19 +28,33 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: 版本一致性（VERSION ↔ SKILL.md）
+        run: |
+          V=$(tr -d '[:space:]' < VERSION)
+          echo "VERSION=$V"
+          grep -q "^version: $V$" SKILL.md
+          grep -q "version-$V-" README.md || true
+
       - name: 语法编译检查
         run: python -m compileall -q scripts
 
       - name: 能力层自检（坐标算法）
         run: python scripts/gc_common.py
 
-      - name: 质检模块自检
+      - name: 质检模块自检（12 项）
         run: python scripts/qc.py
 
-      - name: 采集模块自检
+      - name: 采集模块自检（网格 / 断点 / 计划）
         run: python scripts/collect.py --selftest
 
-      - name: 输出模块自检（模板生成 + 三级降级链）
+      - name: 输出模块自检（模板生成）
         run: |
           python scripts/export.py --template /tmp/模板_自检.xlsx
           test -s /tmp/模板_自检.xlsx
+
+      - name: 输出链路冒烟（六表 + 质检报告）
+        run: |
+          python scripts/export.py --demo
+          test -f output/示例_六表输出.xlsx
+          test -f output/示例_质检报告.md
+          grep -q "乡镇表" output/示例_质检报告.md || true

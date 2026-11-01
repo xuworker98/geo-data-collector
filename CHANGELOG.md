@@ -10,27 +10,41 @@
 ### 新增
 
 - 补齐 GitHub 发行文件：`LICENSE`（MIT）、`CHANGELOG.md`、`CONTRIBUTING.md`、
+  `SECURITY.md`、`DATA-SOURCES.md`、`THIRD-PARTY-NOTICES.md`、`VERSION`、
   `.gitignore`、`.gitattributes`、`requirements.txt`、GitHub Actions 离线自检
 - `README.md` 重写为项目主页：功能总表、流程示意、支持格式、快速开始、
-  准确率分级承诺、合规红线、开发者说明、联系方式
+  准确率分级承诺、合规与使用限制、已知限制、数据来源、开发者说明、联系方式
 - 新增 `docs/`：`使用手册.md`、`架构说明.md`、`排障与常见坑.md`
 - 新增 `references/`：`自然村采集规则.md`（R1–R23）、`准确率与质检口径.md`、
   `实测案例与归因.md`
 - 新增 `examples/` 示例输入表、`archive/` 原始技能包归档说明
+- 新增 `export.to_out_fields()`：采集记录 → 明细行适配（补 `所属乡镇`、派生 GCJ-02、归一质检状态）
 
 ### 变更
 
 - `SKILL.md` 由 762 行精简为技能定义（触发条件 / 流程 / 硬约束 / 参考索引），
   长规则与实测案例改为 `references/` 渐进披露，按需读取
   （原文内容未删减，仅重新归类）
+- `OUT_FIELDS` 增加 `所属乡镇`（20 → 21 列），修复乡镇表恒为「(未填写)」的问题
 - 统一仓库文本编码与换行（UTF-8 无 BOM / LF）
 - 修正旧 README 目录表中列出的不存在目录（`tests/`、`data/`、`temp/`），
   改为"运行后生成"的准确说明
 
-### 修复
+### 修复（开源前安全与可用性审计）
 
-- `SKILL.md` 末尾进度描述停留在"M6 进行中 / M7 待做"，与 V1.1.1 实际状态冲突，已改正
-- `SKILL.md` 引用的 `CHANGELOG.md` 此前不存在，本次补齐
+- **HTTPS 证书校验恢复默认开启**：此前全局 `CERT_NONE` 会让 Key 与地址暴露给中间人；
+  新增 `GDC_INSECURE_TLS=1` 显式降级开关（带警告）
+- **依赖缺失不再静默**：缺 `pyproj` 时打印 `RuntimeWarning` 并按恒等处理
+- **网络失败不再静默**：`_get_retry` 失败时发 `RuntimeWarning` 并记录 `_LAST_NET_ERROR`
+- **GBK 控制台崩溃修复**：采集计划里 `⚠` 字符在 cp936 控制台会 `UnicodeEncodeError`，改为 `[!]`
+- **`export.py --template` 默认路径改为仓库 `assets/`**，不再依赖当前工作目录（此前从 `scripts/` 运行会静默生成第二份 assets）
+- 删除源码中的内部项目名与第一人称复盘表述；`adminchain._bbox_of` 标明为未实现桩
+- 修正文档数字：GCJ-02 偏移改为实测 510~560 m；`qc.py` 自检 12 项；检索词阶梯最多 9 条（含村委会变体）；请求超时 15 s；补充 300 m（质检分级）与 100 m（交付达标线）的区别
+
+### 已知限制
+
+见 [`README.md`](README.md#️-已知限制--known-limitationsv111)：
+POI 两模式仅高德、网络失败归「未命中」、6 类任务与 4 个 `Job.kind` 的差异、300 m 与 100 m 双阈值等。
 
 ## [1.0.0] - 2026-10-20
 

@@ -171,7 +171,7 @@ def http_opener(direct: bool | None = None, verbose: bool = False):
       2. 环境变量 GDC_PROXY / https_proxy / http_proxy → 先 TCP 探测，活的才用
       3. 探测失败或无代理配置 → 直连
 
-    为什么必须探测：很多环境（含本机当前环境）注入了 `http_proxy=127.0.0.1:7960`
+    为什么必须探测：很多环境会注入 `http_proxy=127.0.0.1:7960` 这类失效代理，
     但该端口并无服务，urllib 会默默走代理并卡到超时，表现和「禁网」一模一样。
     """
     global _OPENER
@@ -181,9 +181,13 @@ def http_opener(direct: bool | None = None, verbose: bool = False):
     import ssl
     import urllib.request
 
+    # 默认严格校验证书：Key 与用户地址都在 URL/正文里，关闭校验等于把凭证暴露给中间人。
+    # 仅当身处必须抓包的可信内网排障环境，才显式设 GDC_INSECURE_TLS=1 降级。
     ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
+    if os.environ.get("GDC_INSECURE_TLS") == "1":
+        print("  [警告] GDC_INSECURE_TLS=1：已关闭 HTTPS 证书校验，仅限可信内网排障使用")
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
 
     proxy = "" if direct else _env_proxy()
     mode = "直连"

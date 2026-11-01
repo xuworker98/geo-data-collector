@@ -39,7 +39,14 @@
 - **六表 Excel Six-table Output**：地市 / 区县 / 乡镇 / 明细 / 汇总 / 校验，附 CSV 与五段式质检报告。
 - **必填满 Never-blank Delivery**：每条输入必有一行输出（坐标，或「未命中 + 原因 + 建议动作」），绝不留空。
 - **零 Key 可用 Zero-key Mode**：坐标转换、纠偏、区划查询（本地缓存）、模板生成均不需要任何 Key。
-- **代理自愈 Proxy Self-healing**：`http_opener()` 探测代理端口，失效代理自动跳过（本机曾因失效代理表现为「整网禁网」）。
+- **代理自愈 Proxy Self-healing**：`http_opener()` 探测代理端口，失效代理自动跳过（否则表现为「整网禁网」）。
+
+### 实现范围说明 / Scope Notes
+
+- **四源降级**覆盖「政府驻地」与「地址转坐标」两条链路；POI 区内分类 / POI 周边当前固定走**高德**（多源检索在 v1.2 计划中）。
+- 端到端编排（读模板 → 派发任务 → 适配明细 → 出六表）由技能层（Agent）负责；本仓库提供采集引擎、判据库与适配函数 `export.to_out_fields()`。
+- 网络层失败会向 stderr 发 `RuntimeWarning` 并记录最近一次原因（`gc_common._LAST_NET_ERROR`），便于与「查无结果」区分；批量结果仍按采集状态落盘。
+- 本仓库**不执行质检**时不会自称「通过」：`to_out_fields()` 只做字段适配，单源结果默认标为存疑。
 
 ## 🖼️ 工作流程示意 / Pipeline
 
@@ -86,19 +93,19 @@ flowchart LR
 | 产物 | 内容 |
 |------|------|
 | `.xlsx` 六表 | 地市表 / 区县表 / 乡镇表 / 明细清单 / 汇总表 / 校验表 |
-| `.csv` | 无 `openpyxl` 时自动降级为同前缀多文件，**列名与内容完全一致** |
+| `.csv` | 三级降级：openpyxl → 纯标准库 OOXML（真 `.xlsx`）→ 多 CSV，**列名与内容完全一致** |
 | 质检报告 `.md` | 五段固定结构：任务概览 / 计划对账 / 质量结论 / 异常清单 / 遗留与建议 |
 
-明细 20 列**必带双坐标**：`经度_WGS84 / 纬度_WGS84` 供工程交付，`经度_GCJ02 / 纬度_GCJ02` 供用户在高德地图直接取点核对。
+明细 21 列**必带双坐标**：`经度_WGS84 / 纬度_WGS84` 供工程交付，`经度_GCJ02 / 纬度_GCJ02` 供用户在高德地图直接取点核对；`所属乡镇` 用于生成乡镇表。
 
 ### 坐标系 / CRS
 
 | 坐标系 | 常见来源 | 本工具如何处理 |
 |------|------|------|
 | WGS84 | GPS、工程交付 | 默认输出坐标系 |
-| GCJ-02 | 高德、腾讯、对外发布地图 | 六次迭代逆解回 WGS84（单次近似实测偏差 450 m 量级，禁止使用） |
+| GCJ-02 | 高德、腾讯、对外发布地图 | 六次迭代逆解回 WGS84（单次近似不可用；南宁一带 GCJ-02 相对 WGS84 总偏移实测约 560 m） |
 | BD-09 | 百度 | BD-09 → GCJ-02 → WGS84 两级转换（只做一级残留约 100 m） |
-| CGCS2000 | 天地图、国家大地坐标 | `pyproj` EPSG:4490 → 4326 严格转换（缺 `pyproj` 时降级为恒等，差异 <1 m） |
+| CGCS2000 | 天地图、国家大地坐标 | `pyproj` EPSG:4490 → 4326 严格转换（缺 `pyproj` 时会打印警告，并按恒等处理，差异 <1 m） |
 
 ## 🚀 快速开始 / Quick Start
 
@@ -107,7 +114,7 @@ flowchart LR
 | 依赖 | 版本 | 说明 |
 |------|------|------|
 | Python | ≥ 3.10 | 用到了 `X \| None` 运行时注解 |
-| pyproj | ≥ 3.4 | 严格坐标转换；缺失时自动降级为恒等转换 |
+| pyproj | ≥ 3.4 | 严格坐标转换；缺失时会打印警告并按恒等处理（差异 <1 m） |
 | openpyxl | ≥ 3.0 | 读写 Excel；缺失时输出降级为纯标准库 xlsx / CSV |
 | 地图 Key | 至少 1 个 | 天地图 / 高德 / 百度 / 腾讯，**本仓库不内置任何 Key** |
 
@@ -134,13 +141,16 @@ python scripts/gc_common.py
 # 区划数据准备：首次联网抓取后永久缓存到 data/regions/（广西实测约 60 s）
 python scripts/regions.py --province 广西 --check
 
-# 生成标准输入模板
-python scripts/export.py --template assets/模板_采集任务清单.xlsx
+# 生成标准输入模板（默认写入仓库 assets/，与当前工作目录无关）
+python scripts/export.py --template
 
 # 模块离线自检（不花配额、不联网）
-python scripts/qc.py
-python scripts/collect.py --selftest
+python scripts/qc.py                   # 12 项检查
+python scripts/collect.py --selftest   # 网格切分 / 断点 / 计划估算
+python scripts/export.py --demo        # 生成示例六表 + 质检报告到 output/
 ```
+
+> Windows 控制台若出现中文乱码，可加 `-X utf8`：`python -X utf8 scripts/qc.py`。
 
 ### 一条采集任务（Python API）
 
@@ -149,18 +159,18 @@ import sys
 sys.path.insert(0, "scripts")
 
 from collect import Job, run
-from export import build_six_tables, write_qc_report, write_table
+from export import to_out_fields, build_six_tables, write_table, write_qc_report
 
 # 采集青秀区全部乡镇政府驻地
 job = Job(kind="gov_seat", province="广西壮族自治区", city="南宁市",
           area="青秀区", levels=(4,))
 res = run(job)                       # 自动出计划 → 执行 → 断点落盘
-rows = res["结果"]
+
+# 采集记录 → 明细行（补 所属乡镇、派生 GCJ-02、归一质检状态）
+rows = to_out_fields(res["结果"], job_id=res["任务"])
 
 # 六表 + 质检报告
-tables = build_six_tables(rows)
-for name, trows in tables.items():
-    write_table(f"output/{name}.xlsx", trows)
+write_table("output/六表.xlsx", build_six_tables(rows))
 write_qc_report("output/质检报告.md", meta, rows)
 ```
 
@@ -188,7 +198,7 @@ Agent 触发与执行纪律见 [`SKILL.md`](SKILL.md)。
 | 坐标转换 / 纠偏 | **≥99%** | 纯算法，迭代逆解误差 <1 m，干净环境实测 0.0 m |
 | 坐标系侦测 | 不承诺准确率，只承诺**不自动决断** | 双向验证 PASS，但区分度依赖地址质量，低置信必须交用户拍板 |
 | 标准门址 → 经纬度（有门牌号） | **≥90%** | 地址路径 ① 级命中 86.1% |
-| 政务服务中心 / 派出所 / 政务网点 | **如实标注实测值**（当前 64.9%～77.5%，三源 75.9%） | 最难场景：图商收录整栋楼、专区在楼内 |
+| 政务服务中心 / 派出所 / 政务网点 | **如实标注实测值**（133 条三源实测 75.9%） | 最难场景：图商收录整栋楼、专区在楼内 |
 | 自然村 / 村民小组 | 不承诺准确率，只承诺「**必填满 + 列候选交用户**」 | 官方无编码无坐标，禁止自动破平 |
 
 **两条硬承诺**：① **不杜撰**——查不到就写查不到，绝不用邻近点或上级行政区中心冒充目标坐标；
@@ -200,7 +210,7 @@ Agent 触发与执行纪律见 [`SKILL.md`](SKILL.md)。
 
 | 不做 | 说明 |
 |---|---|
-| 行政区划边界多边形 | 已移除（原 F8）。不提供省/市/县/乡镇边界 GeoJSON，不做点在多边形判定；需要边界请用 DataV 等专门工具 |
+| 行政区划边界多边形 | 已移除（原 F8）：**不对外交付边界 GeoJSON、不提供边界查询功能**。内部仅在 POI 区内采集时用高德 district 多边形做结果收口，不输出边界数据。需要边界请用 DataV 等专门工具 |
 | 地形 / 遥感影像 / 路网拓扑 | 不在能力范围内 |
 | 室内定位、楼层级坐标 | 图商 API 不提供（政务专区在楼内某层只能标存疑） |
 | 自动决断坐标系 | 可侦测，**不可自动转换**，必须交用户拍板 |
@@ -214,15 +224,24 @@ Agent 触发与执行纪律见 [`SKILL.md`](SKILL.md)。
 geo-data-collector/
 ├── SKILL.md                 AI 技能定义（触发条件 / 流程 / 硬约束 / 参考索引）
 ├── README.md                项目主页（本文件）
+├── VERSION                  版本号唯一事实源
+├── CHANGELOG.md             变更记录
+├── LICENSE                  MIT
+├── SECURITY.md              安全与凭证报告
+├── DATA-SOURCES.md           数据来源与使用条款
+├── THIRD-PARTY-NOTICES.md    第三方算法与依赖声明
+├── CONTRIBUTING.md          贡献指南
+├── requirements.txt         依赖
+├── config.example.json      配置模板（不含 Key）
 ├── scripts/                 核心代码
-│   ├── config.py            配置加载 + 网络层（代理探测）
+│   ├── config.py            配置加载 + 网络层（代理探测 / TLS）
 │   ├── gc_common.py         能力层：坐标引擎 + 四源适配 + 自然村查询
 │   ├── regions.py           区划：民政部五级 + 统计局村级 + 双套代码错位对齐
 │   ├── adminchain.py        行政编码链：四级编码解析 + 撤乡设镇 / 跨区纠偏
 │   ├── collect.py           采集：四任务类型 + 抓前计划 + 配额断点
 │   ├── poi_query.py         POI：瀑布式判定 + 区县字典 + 业务条线互斥
 │   ├── qc.py                质检：四层漏斗 + 自适应抽检 + 坐标系侦测
-│   └── export.py            输出：六表 + 模板 + 质检报告（三级降级）
+│   └── export.py            输出：六表 + 模板 + 质检报告 + 记录适配 to_out_fields()
 ├── references/              给 AI 的速查手册（接口坑位 / 规则 / 口径 / 案例）
 ├── docs/                    给人看的手册（使用 / 架构 / 排障）
 ├── assets/                  输入模板 xlsx
@@ -259,13 +278,44 @@ Python 3.10+ · 标准库（`urllib` / `csv` / `json` / `zipfile`）· pyproj（
 
 **零重型依赖**：除 `pyproj` / `openpyxl` 外不依赖任何第三方库；Excel 输出保留纯标准库 OOXML 降级路径。
 
-## 🔐 合规红线 / Compliance
+## 🔐 合规与使用限制 / Compliance & Usage Limits
 
-1. **不内置 Key** —— Key 仅存本地 `config.local.json`（已 `.gitignore`）或环境变量，绝不入源码、示例与日志
-2. **不做 Key 池轮换** —— 多 Key 轮换突破配额属违规，禁止实现
-3. **输出坐标系可切换** —— 工程交付 WGS84；对外发布地图须切 GCJ-02（测绘法要求）
-4. **行政区划只认官方源** —— 乡镇及以上取民政部，村级取统计局，不用图商数据反推区划
-5. **商用授权提示** —— 四源商用授权需自行与平台签约（各源约 5 万元/年）；采集结果不得作为数据源对外销售
+**使用本工具即表示你已阅读并同意下列条款：**
+
+1. **不内置 Key** —— Key 仅存本地 `config.local.json`（已 `.gitignore`）或环境变量，绝不入源码、示例与日志；日志输出脱敏。
+2. **不做 Key 池轮换** —— 多 Key 轮换突破配额属违规，禁止实现。
+3. **遵守各平台服务条款** —— 使用本工具查询天地图 / 高德 / 百度 / 腾讯即表示你自行核对并遵守其《服务条款》与《商用授权协议》；
+   **不得绕过配额、不得批量缓存或转售平台数据、不得将采集结果作为地图数据源对外提供服务**。
+4. **商用授权自行办理** —— 四家平台的商用授权费用与条款以各平台官网为准，本项目不代收、不担保；商用前请自行签约。
+5. **地图发布合规** —— 对外发布地图除坐标系（建议 GCJ-02）外，还须遵守《测绘法》《地图管理条例》及审图号 / 资质要求；
+   **本工具只做坐标转换，不提供合规审查，转成 GCJ-02 不等于合规**。
+6. **行政区划只认官方源** —— 乡镇及以上取民政部国家地名信息库，村级取国家统计局统计用区划代码，不用图商数据反推区划。
+7. **用户数据自负责任** —— 采集结果含地址与坐标，请自行脱敏、保管与销毁；`data/` 与 `output/` 已在 `.gitignore` 中排除。
+8. **无隶属关系** —— 本项目为独立开源工具，与天地图、高德、百度、腾讯、民政部、国家统计局无隶属或合作关系，相关商标归各自所有者。
+
+数据来源与条款链接见 [`DATA-SOURCES.md`](DATA-SOURCES.md)；第三方算法与依赖声明见 [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md)。
+
+## ⚠️ 已知限制 / Known Limitations（v1.1.1）
+
+如实列出，不藏：
+
+| # | 限制 | 影响 | 规避方式 |
+|---|---|---|---|
+| 1 | POI 区内分类 / 周边两模式当前固定走高德，未接入四源降级 | 高德不可用时该两类任务无产出 | 政府驻地 / 地址转坐标走四源；缺高德时改用地址转坐标 |
+| 2 | 网络层失败被记为「未命中」而非独立状态 | 可能把「没查成」当「查无结果」 | 先跑 `python scripts/config.py` 网络体检；关注 stderr 的 `RuntimeWarning` |
+| 3 | 模板任务类型有 6 种，`collect.Job` 直接支持 4 种 | 「POI关键词」「坐标转换」需按文档调对应函数 | 见 [`docs/使用手册.md`](docs/使用手册.md) §6/§7 |
+| 4 | 质检判定阈值 300 m 与交付达标线 100 m 不同 | 250 m 的点可能被标「合格」但在报告里算不达标 | 报告以 ≤100 m 主口径为准；详见 [`references/准确率与质检口径.md`](references/准确率与质检口径.md) |
+| 5 | 首次区划查询需联网抓缓存 | 无网环境 `regions.py --selftest` 会失败 | 用 `--import-mca/--import-villages` 离线导入 |
+| 6 | 自然村准确率不做承诺 | 官方无自然村名录与坐标 | 按 R1–R23 列候选交用户；用黄金样本库沉淀实测值 |
+
+## 📚 数据来源 / Data Sources
+
+- 行政区划：民政部**国家地名信息库**（联网抓取后台缓存，表版本见抓取元数据）
+- 村级代码：**国家统计局**统计用区划代码（2023）
+- 地图数据：天地图 / 高德 / 百度 / 腾讯 **Web 服务 API**（需自备 Key）
+- 坐标算法：公开 GCJ-02 / BD-09 转换公式 + `pyproj` EPSG:4490→4326
+
+完整来源、抓取方式与条款指引见 [`DATA-SOURCES.md`](DATA-SOURCES.md)。
 
 ## 📄 许可证 / License
 

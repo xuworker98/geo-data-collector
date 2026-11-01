@@ -2,17 +2,17 @@
 """输出模块 M6 —— 六表 Excel / CSV + 标准输入模板 + 质检报告。
 
 设计原则：
-  1. **零第三方依赖优先**：有 openpyxl 时输出多 sheet 的 .xlsx；
-     无 openpyxl 时自动降级为同前缀的多个 .csv（Excel 可双击打开）。
-     两种形态的**列名与内容完全一致**，只是载体不同。
+  1. **三级降级输出**：有 openpyxl 时用它写多 sheet 的 .xlsx；无 openpyxl 时
+     用纯标准库 OOXML 写真 `.xlsx`；两条都失败才降级为同前缀的多个 .csv。
+     三种形态的**列名与内容完全一致**，只是载体不同。
   2. **原文件只读**：模板回填输出新文件（原名 + `_已补齐`），绝不覆盖用户输入。
   3. **必填满**：每条输入必有一行输出；查不到也要给「未命中 + 原因 + 建议动作」，
-     不允许留空行（用户 2026-10-23 明确要求）。
+     不允许留空行。
   4. **可溯源**：每行带 来源源 / 支持源数 / 命中级别 / 置信度 / 质检状态。
 
-命令行：
-  python export.py --template [路径]       生成标准输入模板
-  python export.py --demo                  生成一份示例输出（自检用）
+命令行（在仓库根目录运行）：
+  python scripts/export.py --template [路径]   生成标准输入模板
+  python scripts/export.py --demo              生成一份示例输出（自检用）
 """
 import csv
 import json
@@ -23,6 +23,9 @@ try:
     HAS_OPENPYXL = True
 except ImportError:
     HAS_OPENPYXL = False
+
+#: 仓库根目录（scripts/ 的上一级）。所有默认路径都基于它，避免依赖当前工作目录。
+ROOT = Path(__file__).resolve().parent.parent
 
 
 # ============================================================ 列定义（唯一真源）
@@ -42,7 +45,7 @@ TASK_TYPES = [
 
 #: 输出明细列
 OUT_FIELDS = [
-    "序号", "任务ID", "名称", "所属地市", "所属区县", "详细地址",
+    "序号", "任务ID", "名称", "所属地市", "所属区县", "所属乡镇", "详细地址",
     "经度_WGS84", "纬度_WGS84", "经度_GCJ02", "纬度_GCJ02",
     "来源源", "支持源数", "命中方式", "地址级别", "名称覆盖率", "门牌分",
     "置信度", "质检状态", "存疑原因", "建议动作",
@@ -441,6 +444,93 @@ def write_qc_report(path, meta, rows, extra=None):
     return path
 
 
+# ============================================================ 采集记录 → 明细行
+
+def to_out_fields(records, job_id="", default_status=""):
+    """把采集模块产出的记录适配成 `OUT_FIELDS` 明细行（必填满）。
+
+    采集记录键（`collect.py` 产出）：键 / 名称 / 地址原文 / 经度 / 纬度 / 来源 /
+    采集状态 / 备注 / 任务 / 关键词 / …。本函数只做**字段映射与派生**，不改判据：
+
+    - 补齐 序号 / 任务ID / 所属地市 / 所属区县 / 所属乡镇 / 详细地址
+    - 由 WGS84 派生 GCJ-02 两列（供用户在高德地图取点核对）
+    - 归一 质检状态：已采集且多源 → 通过；已采集单源 → 存疑；
+      请求失败 → 存疑；未命中 → 未命中
+    - 每条记录必出一行，缺字段给空值，不丢行
+
+    ⚠ 本函数**不执行质检**：它只做字段适配。需要四层漏斗结论时先跑
+    `qc.funnel()`，把 `质检状态/存疑原因/建议动作` 填进记录再调用本函数。
+    """
+    from gc_common import wgs84_to_gcj02      # 延迟导入：只有本函数需要
+
+    def num(v):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    out = []
+    for i, r in enumerate(records, 1):
+        lon, lat = num(r.get("经度")), num(r.get("纬度"))
+        glon, glat = r.get("经度_GCJ02", ""), r.get("纬度_GCJ02", "")
+        if lon is not None and lat is not None and glon in ("", None):
+            try:
+                gx, gy = wgs84_to_gcj02(lon, lat)
+                glon, glat = round(gx, 6), round(gy, 6)
+            except Exception:      # noqa: BLE001 派生失败不影响主流程
+                glon = glat = ""
+
+        src = str(r.get("来源源") or r.get("来源") or "")
+        try:
+            n_src = int(r.get("支持源数") or
+                        (len([s for s in src.split(",") if s.strip()]) if src else 0))
+        except (TypeError, ValueError):
+            n_src = 0
+
+        status = r.get("质检状态") or ""
+        if not status:
+            cstate = r.get("采集状态") or ""
+            if cstate == "请求失败":
+                status = "存疑"
+            elif cstate == "已采集" or (lon is not None and lat is not None):
+                status = "通过" if n_src >= 2 else "存疑"
+            else:
+                status = "未命中"
+
+        reason = r.get("存疑原因") or r.get("备注") or ""
+        if status == "存疑" and not reason:
+            reason = "单源响应或未做交叉验真，建议人工核对"
+        if status == "未命中" and not reason:
+            reason = "图商无收录 / 地址信息不足 / 网络未查成"
+
+        action = r.get("建议动作") or ""
+        if not action:
+            action = {"通过": "",
+                      "存疑": "附 GCJ-02 坐标在地图上取点核对",
+                      "未命中": "补全地址或换关键词后重试，仍无则人工补录"}[status]
+
+        out.append({
+            "序号": i, "任务ID": r.get("任务ID") or job_id,
+            "名称": r.get("名称") or r.get("地址原文") or "",
+            "所属地市": r.get("所属地市") or r.get("市") or "",
+            "所属区县": r.get("所属区县") or r.get("区县") or "",
+            "所属乡镇": r.get("所属乡镇") or r.get("乡镇") or "",
+            "详细地址": r.get("详细地址") or r.get("地址原文") or r.get("地址") or "",
+            "经度_WGS84": "" if lon is None else lon,
+            "纬度_WGS84": "" if lat is None else lat,
+            "经度_GCJ02": glon, "纬度_GCJ02": glat,
+            "来源源": src, "支持源数": n_src,
+            "命中方式": r.get("命中方式") or r.get("采集状态") or "",
+            "地址级别": r.get("地址级别") or "",
+            "名称覆盖率": r.get("名称覆盖率") or "",
+            "门牌分": r.get("门牌分") or "",
+            "置信度": r.get("置信度") or ("高" if n_src >= 2 else "中" if n_src == 1 else ""),
+            "质检状态": status, "存疑原因": reason, "建议动作": action,
+            "偏差米": r.get("偏差米") or "",
+        })
+    return out
+
+
 # ============================================================ 自检
 
 def _demo():
@@ -448,7 +538,7 @@ def _demo():
     for i in range(1, 6):
         rows.append({
             "序号": i, "任务ID": f"T{i:03d}", "名称": f"示例点{i}",
-            "所属地市": "南宁市", "所属区县": "青秀区",
+            "所属地市": "南宁市", "所属区县": "青秀区", "所属乡镇": "示例镇",
             "详细地址": "南宁市青秀区民族大道 100 号",
             "经度_WGS84": 108.377045, "纬度_WGS84": 22.742956,
             "经度_GCJ02": "", "纬度_GCJ02": "",
@@ -466,9 +556,10 @@ def _demo():
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser(description="输出模块 M6 自检")
-    ap.add_argument("--template", nargs="?", const="assets/模板_采集任务清单.xlsx",
-                    help="生成标准输入模板")
-    ap.add_argument("--demo", action="store_true", help="生成示例输出")
+    ap.add_argument("--template", nargs="?",
+                    const=str(ROOT / "assets" / "模板_采集任务清单.xlsx"),
+                    help="生成标准输入模板（默认写入仓库 assets/）")
+    ap.add_argument("--demo", action="store_true", help="生成示例输出到 output/")
     a = ap.parse_args()
 
     print(f"openpyxl: {'可用' if HAS_OPENPYXL else '不可用 → 用纯标准库写 xlsx'}")
@@ -477,9 +568,9 @@ if __name__ == "__main__":
         print("模板已生成:", p)
     if a.demo:
         rows = _demo()
-        p = write_table(Path("output/示例_六表输出.xlsx"), build_six_tables(rows))
+        p = write_table(ROOT / "output" / "示例_六表输出.xlsx", build_six_tables(rows))
         print("示例六表:", p)
-        r = write_qc_report(Path("output/示例_质检报告.md"),
+        r = write_qc_report(ROOT / "output" / "示例_质检报告.md",
                             {"任务ID": "DEMO", "模块": "地址转坐标", "条数": 5,
                              "起止": "-", "版本": "demo",
                              "计划请求数": 15, "实际请求数": 15,
@@ -487,4 +578,4 @@ if __name__ == "__main__":
                             rows)
         print("示例质检报告:", r)
     if not a.template and not a.demo:
-        print("用法: python export.py --template | --demo")
+        print("用法: python scripts/export.py --template | --demo")

@@ -21,10 +21,13 @@
 
 ```bash
 python -m compileall -q scripts
-python scripts/gc_common.py          # 坐标算法自检
-python scripts/qc.py                 # 质检模块自检 12/12
-python scripts/collect.py --selftest # 采集模块自检
+python -X utf8 scripts/gc_common.py          # 坐标算法自检
+python -X utf8 scripts/qc.py                 # 质检模块自检 12/12
+python -X utf8 scripts/collect.py --selftest # 采集模块自检
+python -X utf8 scripts/export.py --demo      # 输出链路（六表 + 报告）冒烟
 ```
+
+> Windows 控制台建议加 `-X utf8`，避免 GBK 代码页下的中文乱码。
 
 4. 复核本次改动是否触及「不可改」的硬约束（见下文）
 5. 提交 PR，并在描述里写明：改了什么、依据是什么、跑过哪些自检
@@ -35,7 +38,8 @@ python scripts/collect.py --selftest # 采集模块自检
 - 不引入重型依赖：坐标与采集用标准库 + `pyproj`（可降级）；Excel 输出保留纯标准库降级路径
 - 新增数据源需同时补：`references/四源接口对照表.md` 的能力/坑位、降级链位置、限速与配额
 - 新增判据需附**实测证据**（多少条样本、达标率变化多少），只写"我觉得更合理"的 PR 不予合并
-- 网络层遵循：4xx 是永久错不重试；超时 10 s；日配额爆掉当日熔断
+- 网络层遵循：4xx 是永久错不重试；默认超时 15 s（`runtime.timeout`）；日配额爆掉当日熔断
+- 涉及凭证/数据安全请先读 [`SECURITY.md`](SECURITY.md)；涉及数据来源与条款读 [`DATA-SOURCES.md`](DATA-SOURCES.md)
 
 ## 四、不可改动的硬约束 / Non-negotiable Rules
 
@@ -45,7 +49,7 @@ python scripts/collect.py --selftest # 采集模块自检
 |---|---|---|
 | 1 | **不内置任何 API Key**，不得写入源码/示例/日志 | 合规红线，且公开仓库会泄露 |
 | 2 | **不做 Key 池轮换** | 属违规突破配额 |
-| 3 | `gcj02_to_wgs84` 保持 6 次迭代逆解，不得改单次近似 | 单次近似实测产生 450 m 级误差 |
+| 3 | `gcj02_to_wgs84` 保持 6 次迭代逆解，不得改单次近似 | 单次近似不可接受（GCJ-02 与 WGS84 总偏移约 0.5 km） |
 | 4 | 自然村匹配必须用（区县, 乡镇, 行政村）复合键 | 同名村会跨村串味 |
 | 5 | 坐标系**可侦测不可决断**，必须交用户拍板 | 误判代价 = 整表偏移 500 m |
 | 6 | 票数不能压过内容判据（R23 已证伪三种改法） | 同源抄写会击穿票数制 |

@@ -813,7 +813,8 @@ def _print_plan(job: Job, p: dict):
     print(f"  各源配额    : " + "，".join(f"{k} {v}" for k, v in p["各源配额占用"].items()))
     if p["超日配额"]:
         for s, (need, cap) in p["超日配额"].items():
-            print(f"  ⚠ {s} 需 {need} 次 > 日配额 {cap} 次")
+            # 不用 emoji/符号：GBK 控制台下会 UnicodeEncodeError（Windows 默认 cp936）
+            print(f"  [!] {s} 需 {need} 次 > 日配额 {cap} 次")
     print(f"  建议        : {p['建议']}")
     print("-" * 62)
 
