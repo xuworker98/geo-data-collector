@@ -2,6 +2,7 @@
 
 **geo-data-collector — Batch Geocoding, POI Collection & Coordinate Verification**
 
+[![CI](https://github.com/xuworker98/geo-data-collector/actions/workflows/ci.yml/badge.svg)](https://github.com/xuworker98/geo-data-collector/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/version-1.1.1-14508C.svg)](CHANGELOG.md)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](requirements.txt)
