@@ -1,0 +1,34 @@
+# ============ 凭证与本地配置（绝不提交） ============
+config.local.json
+*.local.json
+.env
+.env.*
+
+# ============ Python ============
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+
+# ============ 运行产物（采集结果、断点、日志） ============
+data/
+output/
+out/
+*.log
+*.jsonl
+*.xlsx
+*.xls
+!assets/*.xlsx
+
+# ============ 原始技能包归档（不随仓库分发） ============
+archive/*.zip
+
+# ============ 编辑器与系统文件 ============
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini

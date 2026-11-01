@@ -1,0 +1,36 @@
+{
+  "_说明": "复制本文件为 config.local.json 后填入自己的 Key。config.local.json 已被 .gitignore 排除，不会随项目分发。",
+  "_Key类型要求": "必须使用【Web 服务 / 服务端】类型的 Key，不是浏览器端/JS API 类型",
+  "_申请地址": {
+    "tianditu": "https://console.tianditu.gov.cn/",
+    "amap": "https://console.amap.com/dev/key/app",
+    "baidu": "https://lbsyun.baidu.com/apiconsole/key",
+    "qq": "https://lbs.qq.com/dev/console/key/manage"
+  },
+  "keys": {
+    "tianditu": "",
+    "amap": "",
+    "baidu": "",
+    "qq": ""
+  },
+  "runtime": {
+    "daily_cap": {
+      "tianditu": 7000,
+      "amap": 5000,
+      "baidu": 5000,
+      "qq": 5000
+    },
+    "qps": {
+      "tianditu": 8,
+      "amap": 5,
+      "baidu": 5,
+      "qq": 5
+    },
+    "checkpoint_every": 50,
+    "timeout": 15,
+    "retries": 3
+  },
+  "output": {
+    "default_crs": "WGS84"
+  }
+}
